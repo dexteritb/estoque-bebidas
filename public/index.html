@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Controle de Estoque — Bebidas</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="loginScreen">
+  <div class="login-card" id="loginCard">
+    <h1>🥤 Controle de Estoque</h1>
+    <div class="login-sub">Carregando…</div>
+  </div>
+</div>
+
+<div class="wrap" id="appScreen" style="display:none;">
+  <header class="top">
+    <h1>🥤 Controle de Estoque</h1>
+    <div class="userbar">
+      <div class="store-toggle" id="storeToggle" style="display:none;">
+        <button data-store="saborei" class="active">Saborei</button>
+        <button data-store="holyburger">Holy Burger</button>
+      </div>
+      <span class="who">Olá, <b id="whoName"></b> <span class="role-pill" id="whoRole"></span></span>
+      <button class="secondary" id="btnLogout" style="padding:6px 12px; font-size:0.8rem;">Sair</button>
+    </div>
+  </header>
+
+  <div class="cards" id="cards">
+    <div class="card"><div class="n" id="cardTotalItens">—</div><div class="l">itens em estoque</div></div>
+    <div class="card"><div class="n" id="cardBaixo">—</div><div class="l">abaixo do mínimo</div></div>
+    <div class="card"><div class="n" id="cardNegativo">—</div><div class="l">com saldo negativo</div></div>
+    <div class="card"><div class="n" id="cardMov">—</div><div class="l">movimentações (últimas)</div></div>
+  </div>
+
+  <section id="adminUsersSection" style="display:none;">
+    <h2>👤 Usuários <span class="tag-admin">Admin</span></h2>
+    <div id="userList"></div>
+    <button class="linklike" id="btnShowAddUser">+ Adicionar usuário</button>
+    <div id="addUserForm" style="display:none;">
+      <div class="form-grid">
+        <div><label>Nome</label><input type="text" id="newUserNome" placeholder="Nome do usuário"></div>
+        <div><label>PIN (4 dígitos)</label><input type="text" id="newUserPin" maxlength="4" placeholder="0000"></div>
+        <div><label>Papel</label>
+          <select id="newUserPapel">
+            <option value="loja">Usuário de loja</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div id="newUserLojaWrap"><label>Loja</label>
+          <select id="newUserLoja">
+            <option value="saborei">Saborei</option>
+            <option value="holyburger">Holy Burger</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <button class="primary" id="btnSaveUser">Salvar usuário</button>
+        <button class="secondary" id="btnCancelUser">Cancelar</button>
+      </div>
+    </div>
+    <div id="userStatus"></div>
+  </section>
+
+  <section>
+    <h2>📦 Estoque atual</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Produto</th><th class="num">Preço</th><th class="num">Estoque</th><th class="num">Mínimo</th><th>Status</th><th id="acoesHeader" style="display:none;"></th></tr></thead>
+        <tbody id="estoqueBody"><tr><td colspan="6" class="empty">Carregando…</td></tr></tbody>
+      </table>
+    </div>
+    <div id="addProdutoWrap" style="display:none;">
+      <button class="linklike" id="btnShowAddProduto">+ Adicionar produto</button>
+      <div id="addProdutoForm" style="display:none;">
+        <div class="form-grid">
+          <div><label>Nome do produto</label><input type="text" id="newProdNome" placeholder="Ex: Coca Cola 350ml"></div>
+          <div><label>Preço de venda (R$)</label><input type="number" id="newProdPreco" step="0.01" placeholder="0.00"></div>
+          <div><label>Estoque inicial</label><input type="number" id="newProdEstoque" step="0.01" value="0"></div>
+          <div><label>Estoque mínimo</label><input type="number" id="newProdMinimo" step="0.01" value="5"></div>
+        </div>
+        <div class="row">
+          <button class="primary" id="btnSaveProduto">Salvar produto</button>
+          <button class="secondary" id="btnCancelProduto">Cancelar</button>
+        </div>
+        <div id="addProdutoStatus"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>➕ Registrar entrada (compra/reposição)</h2>
+    <textarea id="entradaInput" placeholder="Coca Lata: +120, Heineken: +24, Água 500ml: 48"></textarea>
+    <div class="row">
+      <button class="primary" id="btnEntrada">Aplicar entrada</button>
+      <span class="toolbar-note">Formato: Produto: quantidade (separado por vírgula). O + é opcional.</span>
+    </div>
+    <div id="entradaStatus"></div>
+  </section>
+
+  <section>
+    <h2>➖ Dar baixa por relatório de vendas (PDF)</h2>
+    <div class="filepick" id="filepick">📄 Clique para escolher o PDF do relatório de vendas do dia</div>
+    <input type="file" id="pdfInput" accept="application/pdf" style="display:none;">
+    <div class="hint">Espera o formato "Totalização de Produtos por Venda Agrupado" do sistema STI3.</div>
+    <div id="pdfPreview"></div>
+  </section>
+
+  <section id="ajusteSection" style="display:none;">
+    <h2>🛠 Ajuste de estoque <span class="tag-admin">Admin</span></h2>
+    <div class="hint" style="margin-bottom:8px;">Use quando a contagem física não bate com o saldo do sistema (perda, quebra, erro de lançamento).</div>
+    <div class="form-grid">
+      <div class="full"><label>Produto</label><select id="ajusteProduto"></select></div>
+      <div><label>Novo saldo real (contagem física)</label><input type="number" id="ajusteNovoSaldo" step="0.01"></div>
+      <div><label>Motivo do ajuste</label><input type="text" id="ajusteMotivo" placeholder="Ex: quebra, contagem errada, perda"></div>
+    </div>
+    <div class="row">
+      <button class="primary" id="btnAjuste">Aplicar ajuste</button>
+    </div>
+    <div id="ajusteStatus"></div>
+  </section>
+
+  <section>
+    <h2>🕓 Histórico de movimentações</h2>
+    <div id="movBody"><div class="empty">Carregando…</div></div>
+  </section>
+</div>
+
+<div id="deleteModal" class="modal-overlay" style="display:none;">
+  <div class="modal-card">
+    <h3>Excluir produto</h3>
+    <p>Você está prestes a excluir <b id="deleteProdNome"></b> do catálogo. Essa ação não pode ser desfeita — o histórico de movimentações desse produto é mantido, mas ele sai do estoque atual.</p>
+    <p>Para confirmar, digite <b>excluir</b> abaixo:</p>
+    <input type="text" id="deleteConfirmInput" placeholder="excluir" style="width:100%; margin-bottom:12px;">
+    <div id="deleteModalStatus"></div>
+    <div class="row" style="margin-top:4px;">
+      <button class="danger" id="btnConfirmDelete" style="flex:1; justify-content:center; padding:9px;" disabled>Excluir definitivamente</button>
+      <button class="secondary" id="btnCancelDelete">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
