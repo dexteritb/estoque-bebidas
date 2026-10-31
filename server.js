@@ -180,7 +180,20 @@ app.patch("/api/produtos/:id/minimo", requireAdmin, asyncRoute(async (req, res) 
   res.json({ ok: true });
 }));
 
-app.delete("/api/produtos/:id", requireAdmin, asyncRoute(async (req, res) => {
+app.patch("/api/produtos/:id/preco", requireAdmin, asyncRoute(async (req, res) => {
+  const { preco } = req.body || {};
+  if (typeof preco !== "number" || !Number.isFinite(preco) || preco < 0) {
+    return res.status(400).json({ error: "preco_invalido" });
+  }
+  const { rowCount } = await pool.query(
+    "UPDATE produtos SET preco = $1, atualizado_em = $2 WHERE id = $3",
+    [preco, nowIso(), req.params.id]
+  );
+  if (!rowCount) return res.status(404).json({ error: "not_found" });
+  res.json({ ok: true });
+}));
+
+app.delete("/api/produtos/:id", requireAdmin,asyncRoute(async (req, res) => {
   const { confirmacao } = req.body || {};
   if (String(confirmacao || "").trim().toLowerCase() !== "excluir") {
     return res.status(400).json({ error: "confirmacao_invalida" });

@@ -232,7 +232,7 @@ function renderEstoque(){
       const acoesCell = isAdmin ? `<td><button class="btn-icon" data-del-produto="${p.id}" title="Excluir produto">🗑</button></td>` : "";
       return `<tr>
         <td>${escapeHtml(p.nome)}</td>
-        <td class="num">${fmtMoney(p.preco)}</td>
+        <td class="num">${isAdmin ? `<input type="number" value="${p.preco}" min="0" step="0.01" data-id="${p.id}" class="precoInput" title="Preço de venda (R$)">` : fmtMoney(p.preco)}</td>
         <td class="num">${fmtQtd(p.estoque)}</td>
         <td class="num"><input type="number" value="${p.estoqueMinimo||0}" min="0" data-id="${p.id}" class="minInput" ${!isAdmin?"disabled":""}></td>
         <td>${badge}</td>
@@ -244,6 +244,24 @@ function renderEstoque(){
         const id = e.target.dataset.id;
         const val = parseFloat(e.target.value)||0;
         try{ await api("/api/produtos/"+id+"/minimo", { method:"PATCH", body: JSON.stringify({ estoqueMinimo: val }) }); }catch(err){}
+      });
+    });
+    body.querySelectorAll(".precoInput").forEach(inp=>{
+      inp.addEventListener("change", async (e)=>{
+        const prod = produtosCache.find(p=>p.id===e.target.dataset.id);
+        const preco = parseFloat(e.target.value);
+        if(isNaN(preco) || preco < 0){
+          alert("Informe um preço válido.");
+          e.target.value = prod.preco;
+          return;
+        }
+        try{
+          await api("/api/produtos/"+prod.id+"/preco", { method:"PATCH", body: JSON.stringify({ preco }) });
+          prod.preco = preco;
+        }catch(err){
+          alert("Não foi possível salvar o preço.");
+          e.target.value = prod.preco;
+        }
       });
     });
     body.querySelectorAll("[data-del-produto]").forEach(btn=>{
