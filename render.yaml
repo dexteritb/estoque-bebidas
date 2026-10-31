@@ -11,7 +11,7 @@
 
 databases:
   - name: estoque-bebidas-db
-    plan: free
+    plan:  basic-256mb
     databaseName: estoque_bebidas
     user: estoque_admin
 
