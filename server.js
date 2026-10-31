@@ -7,7 +7,7 @@ const path = require("path");
 const crypto = require("crypto");
 
 const { pool, init } = require("./db");
-const { normaliza, slugify } = require("./utils");
+const { normaliza, slugify, parseEntrada, hashItens } = require("./utils");
 const { parseVendasPdf } = require("./parse-pdf");
 
 const app = express();
@@ -58,6 +58,28 @@ function asyncRoute(fn) {
     res.status(500).json({ error: "internal_error" });
   });
 }
+async function withTx(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+// Trava o produto até o fim da transação, pra duas operações simultâneas não
+// sobrescreverem o saldo uma da outra.
+async function travarProduto(client, id, loja) {
+  const { rows } = await client.query("SELECT * FROM produtos WHERE id = $1 AND loja = $2 FOR UPDATE", [id, loja]);
+  return rows[0];
+}
+// Travar sempre na mesma ordem evita deadlock entre operações com vários produtos.
+function porProdutoId(a, b) { return a.produtoId < b.produtoId ? -1 : a.produtoId > b.produtoId ? 1 : 0; }
 
 // ---------- AUTH ----------
 app.post("/api/login", asyncRoute(async (req, res) => {
@@ -183,28 +205,33 @@ app.post("/api/entrada", requireAuth, asyncRoute(async (req, res) => {
   if (!texto || !texto.trim()) return res.status(400).json({ error: "texto_vazio" });
 
   const { rows: produtos } = await pool.query("SELECT * FROM produtos WHERE loja = $1", [loja]);
-  const partes = texto.split(",").map((s) => s.trim()).filter(Boolean);
-  const aplicados = [];
+  const validos = [];
   const naoEncontrados = [];
 
-  for (const parte of partes) {
-    const m = parte.match(/^(.+?):\s*\+?(-?\d+(?:[.,]\d+)?)$/);
-    if (!m) { naoEncontrados.push(parte + " (formato não reconhecido)"); continue; }
-    const nomeAlvo = normaliza(m[1].trim());
-    const qtd = parseFloat(m[2].replace(",", "."));
-    const prod = produtos.find((p) => normaliza(p.nome) === nomeAlvo);
-    if (!prod) { naoEncontrados.push(m[1].trim() + " (produto não encontrado)"); continue; }
-    const antes = Number(prod.estoque) || 0;
-    const depois = antes + qtd;
-    await pool.query("UPDATE produtos SET estoque = $1, atualizado_em = $2 WHERE id = $3", [depois, nowIso(), prod.id]);
-    await pool.query(
-      `INSERT INTO movimentacoes (loja, produto, tipo, quantidade, estoque_antes, estoque_depois, origem, usuario, criado_em)
-       VALUES ($1, $2, 'entrada', $3, $4, $5, 'manual', $6, $7)`,
-      [loja, prod.nome, qtd, antes, depois, req.session.user.nome, nowIso()]
-    );
-    prod.estoque = depois;
-    aplicados.push({ produto: prod.nome, antes, depois });
+  for (const item of parseEntrada(texto)) {
+    if (item.invalido) { naoEncontrados.push(item.invalido + " (formato não reconhecido)"); continue; }
+    const prod = produtos.find((p) => normaliza(p.nome) === normaliza(item.nome));
+    if (!prod) { naoEncontrados.push(item.nome + " (produto não encontrado)"); continue; }
+    validos.push({ produtoId: prod.id, qtd: item.qtd });
   }
+
+  const aplicados = await withTx(async (client) => {
+    const feitos = [];
+    for (const { produtoId, qtd } of validos.sort(porProdutoId)) {
+      const prod = await travarProduto(client, produtoId, loja);
+      if (!prod) continue;
+      const antes = Number(prod.estoque) || 0;
+      const depois = antes + qtd;
+      await client.query("UPDATE produtos SET estoque = $1, atualizado_em = $2 WHERE id = $3", [depois, nowIso(), prod.id]);
+      await client.query(
+        `INSERT INTO movimentacoes (loja, produto, tipo, quantidade, estoque_antes, estoque_depois, origem, usuario, criado_em)
+         VALUES ($1, $2, 'entrada', $3, $4, $5, 'manual', $6, $7)`,
+        [loja, prod.nome, qtd, antes, depois, req.session.user.nome, nowIso()]
+      );
+      feitos.push({ produto: prod.nome, antes, depois });
+    }
+    return feitos;
+  });
   res.json({ aplicados, naoEncontrados });
 }));
 
@@ -227,7 +254,24 @@ app.post("/api/saida/preview", requireAuth, upload.single("pdf"), asyncRoute(asy
         estoqueDepois: prod ? Number(prod.estoque) - it.qtd : null,
       };
     });
-    res.json({ itens: preview, filename: req.file.originalname });
+    if (!itens.length) return res.json({ itens: preview, filename: req.file.originalname });
+
+    const { rows: salvas } = await pool.query(
+      `INSERT INTO baixas (loja, hash, filename, itens, criado_em)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (loja, hash) DO UPDATE SET filename = EXCLUDED.filename, itens = EXCLUDED.itens
+       WHERE baixas.aplicada_em IS NULL
+       RETURNING id`,
+      [loja, hashItens(itens), req.file.originalname, JSON.stringify(preview), nowIso()]
+    );
+    if (!salvas.length) {
+      const { rows } = await pool.query(
+        "SELECT filename, usuario, aplicada_em FROM baixas WHERE loja = $1 AND hash = $2",
+        [loja, hashItens(itens)]
+      );
+      return res.json({ itens: preview, filename: req.file.originalname, jaAplicada: rows[0] });
+    }
+    res.json({ itens: preview, filename: req.file.originalname, baixaId: salvas[0].id });
   } catch (err) {
     res.status(500).json({ error: "erro_ao_ler_pdf", detalhe: String(err.message || err) });
   }
@@ -236,17 +280,24 @@ app.post("/api/saida/preview", requireAuth, upload.single("pdf"), asyncRoute(asy
 app.post("/api/saida/confirmar", requireAuth, asyncRoute(async (req, res) => {
   const loja = resolveLoja(req);
   if (!loja) return res.status(400).json({ error: "loja_invalida" });
-  const { itens, filename } = req.body || {};
-  if (!Array.isArray(itens)) return res.status(400).json({ error: "itens_invalidos" });
+  const { baixaId } = req.body || {};
+  if (!Number.isInteger(baixaId)) return res.status(400).json({ error: "baixa_invalida" });
 
-  const client = await pool.connect();
-  let aplicadosCount = 0;
-  try {
-    await client.query("BEGIN");
-    for (const it of itens) {
-      if (!it.produtoId) continue;
-      const { rows } = await client.query("SELECT * FROM produtos WHERE id = $1 AND loja = $2", [it.produtoId, loja]);
-      const prod = rows[0];
+  const aplicados = await withTx(async (client) => {
+    // Marcar como aplicada primeiro: em dois cliques, o segundo fica esperando
+    // esse UPDATE e depois não encontra mais a baixa pendente.
+    const { rows } = await client.query(
+      `UPDATE baixas SET aplicada_em = $1, usuario = $2
+       WHERE id = $3 AND loja = $4 AND aplicada_em IS NULL
+       RETURNING itens, filename`,
+      [nowIso(), req.session.user.nome, baixaId, loja]
+    );
+    if (!rows.length) return null;
+    const { itens, filename } = rows[0];
+
+    let count = 0;
+    for (const it of itens.filter((i) => i.produtoId).sort(porProdutoId)) {
+      const prod = await travarProduto(client, it.produtoId, loja);
       if (!prod) continue;
       const antes = Number(prod.estoque) || 0;
       const depois = antes - it.qtd;
@@ -256,16 +307,12 @@ app.post("/api/saida/confirmar", requireAuth, asyncRoute(async (req, res) => {
          VALUES ($1, $2, 'saida', $3, $4, $5, $6, $7, $8)`,
         [loja, prod.nome, it.qtd, antes, depois, filename || "relatório de vendas", req.session.user.nome, nowIso()]
       );
-      aplicadosCount++;
+      count++;
     }
-    await client.query("COMMIT");
-  } catch (err) {
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
-  }
-  res.json({ ok: true, aplicados: aplicadosCount });
+    return count;
+  });
+  if (aplicados === null) return res.status(409).json({ error: "baixa_ja_aplicada" });
+  res.json({ ok: true, aplicados });
 }));
 
 // ---------- AJUSTE (admin only) ----------
@@ -275,17 +322,20 @@ app.post("/api/ajuste", requireAdmin, asyncRoute(async (req, res) => {
   if (!loja || !produtoId || typeof novoSaldo !== "number" || !motivo || !motivo.trim()) {
     return res.status(400).json({ error: "invalid_fields" });
   }
-  const { rows } = await pool.query("SELECT * FROM produtos WHERE id = $1 AND loja = $2", [produtoId, loja]);
-  const prod = rows[0];
-  if (!prod) return res.status(404).json({ error: "not_found" });
-  const antes = Number(prod.estoque) || 0;
-  const delta = novoSaldo - antes;
-  await pool.query("UPDATE produtos SET estoque = $1, atualizado_em = $2 WHERE id = $3", [novoSaldo, nowIso(), prod.id]);
-  await pool.query(
-    `INSERT INTO movimentacoes (loja, produto, tipo, quantidade, estoque_antes, estoque_depois, motivo, usuario, criado_em)
-     VALUES ($1, $2, 'ajuste', $3, $4, $5, $6, $7, $8)`,
-    [loja, prod.nome, delta, antes, novoSaldo, motivo.trim(), req.session.user.nome, nowIso()]
-  );
+  const encontrado = await withTx(async (client) => {
+    const prod = await travarProduto(client, produtoId, loja);
+    if (!prod) return false;
+    const antes = Number(prod.estoque) || 0;
+    const delta = novoSaldo - antes;
+    await client.query("UPDATE produtos SET estoque = $1, atualizado_em = $2 WHERE id = $3", [novoSaldo, nowIso(), prod.id]);
+    await client.query(
+      `INSERT INTO movimentacoes (loja, produto, tipo, quantidade, estoque_antes, estoque_depois, motivo, usuario, criado_em)
+       VALUES ($1, $2, 'ajuste', $3, $4, $5, $6, $7, $8)`,
+      [loja, prod.nome, delta, antes, novoSaldo, motivo.trim(), req.session.user.nome, nowIso()]
+    );
+    return true;
+  });
+  if (!encontrado) return res.status(404).json({ error: "not_found" });
   res.json({ ok: true });
 }));
 

@@ -332,14 +332,20 @@ async function handlePdf(e){
       pendingSaida = null;
       return;
     }
-    renderSaidaPreview(data.itens, data.filename);
+    if(data.jaAplicada){
+      const j = data.jaAplicada;
+      pendingSaida = null;
+      previewEl.innerHTML = `<div class="status-msg err">⚠ Este relatório já teve baixa em ${escapeHtml(fmtDate(j.aplicada_em))}${j.usuario ? " por " + escapeHtml(j.usuario) : ""}${j.filename ? " (" + escapeHtml(j.filename) + ")" : ""}. Nada foi alterado.</div>`;
+    } else {
+      renderSaidaPreview(data.itens, data.baixaId);
+    }
   }catch(err){
     previewEl.innerHTML = '<div class="status-msg err">Erro ao ler o PDF.</div>';
   }
   e.target.value = "";
 }
 
-function renderSaidaPreview(itens, filename){
+function renderSaidaPreview(itens, baixaId){
   const previewEl = document.getElementById("pdfPreview");
   const casados = itens.filter(it=>it.produtoId);
   const fora = itens.filter(it=>!it.produtoId);
@@ -364,7 +370,7 @@ function renderSaidaPreview(itens, filename){
       <button class="secondary" id="btnCancelarSaida">Cancelar</button>
     </div>
   `;
-  pendingSaida = { itens, filename };
+  pendingSaida = { baixaId };
   document.getElementById("btnConfirmarSaida").addEventListener("click", confirmSaida);
   document.getElementById("btnCancelarSaida").addEventListener("click", ()=>{ previewEl.innerHTML = ""; pendingSaida = null; });
 }
@@ -379,7 +385,10 @@ async function confirmSaida(){
     pendingSaida = null;
     loadProdutos(); loadMovimentacoes();
   }catch(err){
-    document.getElementById("pdfPreview").innerHTML += '<div class="status-msg err">Erro ao aplicar baixa.</div>';
+    const jaFeita = err.body && err.body.error === "baixa_ja_aplicada";
+    document.getElementById("pdfPreview").innerHTML = `<div class="status-msg err">${jaFeita ? "⚠ Este relatório já teve baixa. Nada foi alterado." : "Erro ao aplicar baixa."}</div>`;
+    pendingSaida = null;
+    loadProdutos(); loadMovimentacoes();
   }
 }
 
