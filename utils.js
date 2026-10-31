@@ -10,10 +10,11 @@ function slugify(s) {
   return normaliza(s).replace(/\s+/g, "-");
 }
 
-// Só separa depois de um ": quantidade", porque nomes têm vírgula ("Água 1,5L")
+// A quantidade é o último número do item ("Heineken 24" ou "Heineken: 24").
+// Só separa depois dela, porque nomes têm vírgula ("Água 1,5L")
 // e quantidades também ("Chopp: 1,5"). Vírgula colada num dígito é decimal.
-const SEPARADOR_ENTRADA = /(?<=:\s*[+-]?\d+(?:[.,]\d+)?)\s*(?:[;\n]+|,(?!\d))\s*/;
-const ITEM_ENTRADA = /^(.+?):\s*\+?(\d+(?:[.,]\d+)?)$/;
+const SEPARADOR_ENTRADA = /(?<=[:\s][+-]?\d+(?:[.,]\d+)?)\s*(?:[;\n]+|,(?!\d))\s*/;
+const ITEM_ENTRADA = /^(.+?)(?:\s*:\s*|\s+)\+?(\d+(?:[.,]\d+)?)$/;
 
 // Devolve [{ nome, qtd }]; o que não for uma quantidade positiva vem como
 // { invalido: "texto original" }.
