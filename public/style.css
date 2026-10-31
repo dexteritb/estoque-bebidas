@@ -46,6 +46,7 @@ input[type=number], input[type=text], input[type=password], select{
   padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font-size:0.87rem; font-family:var(--font);
 }
 input[type=number]{width:64px;}
+input.precoInput{width:88px;}
 textarea{width:100%; min-height:64px; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface-2); color:var(--text); font-family:var(--font); font-size:0.9rem; resize:vertical;}
 .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:10px;}
 button.primary{background:var(--accent); color:#fff; border:none; padding:9px 16px; border-radius:8px; font-weight:600; font-size:0.88rem; cursor:pointer; transition:opacity .15s;}
