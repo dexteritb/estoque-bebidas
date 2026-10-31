@@ -1,7 +1,11 @@
-const { Pool } = require("pg");
+const { Pool, types } = require("pg");
 const bcrypt = require("bcryptjs");
 const { slugify } = require("./utils");
 const { saborei, holyburger } = require("./seed-data");
+
+// Por padrão o pg devolve NUMERIC como texto; aqui queremos número de verdade.
+const NUMERIC_OID = 1700;
+types.setTypeParser(NUMERIC_OID, parseFloat);
 
 if (!process.env.DATABASE_URL) {
   console.error("✗ DATABASE_URL não definido. Configure a variável de ambiente com a connection string do Postgres.");
@@ -48,6 +52,20 @@ async function migrate() {
       motivo TEXT,
       usuario TEXT,
       criado_em TIMESTAMPTZ NOT NULL
+    );
+
+    -- Cada relatório de vendas lido. A quantidade confirmada vem daqui (nunca do
+    -- navegador), e o hash único impede dar baixa no mesmo relatório duas vezes.
+    CREATE TABLE IF NOT EXISTS baixas (
+      id SERIAL PRIMARY KEY,
+      loja TEXT NOT NULL,
+      hash TEXT NOT NULL,
+      filename TEXT,
+      itens JSONB NOT NULL,
+      usuario TEXT,
+      criado_em TIMESTAMPTZ NOT NULL,
+      aplicada_em TIMESTAMPTZ,
+      UNIQUE (loja, hash)
     );
 
     CREATE INDEX IF NOT EXISTS idx_produtos_loja ON produtos(loja);
